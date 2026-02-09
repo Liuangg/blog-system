@@ -165,7 +165,17 @@ def register_routes(app):
         except Exception as e:
             db.session.rollback()
             return jsonify({'error': f'登录失败: {str(e)}'}), 500
-
+    @app.route('/api/users/all', methods=['GET'])
+    def get_all_users():
+        try:
+            users = User.query.all()
+            return jsonify({
+                'message': '获取用户成功',
+                'count': len(users),
+                'users': [user.to_dict() for user in users]
+            }), 200
+        except Exception as e:
+            return jsonify({'error': f'获取用户失败: {str(e)}'}), 500
     @app.route('/api/posts', methods=['POST'])
     @login_required
     def create_post():
@@ -378,7 +388,7 @@ def register_routes(app):
             return jsonify({
                 'message': '获取评论成功',
                 'count': len(comments),
-                'comments': [comment.to_dict(include_author=True) for comment in comments]
+                'comments': [comment.to_dict(include_author=False) for comment in comments]
             }), 200
         except Exception as e:
             return jsonify({'error': f'获取评论失败: {str(e)}'}), 500
