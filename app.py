@@ -214,34 +214,18 @@ def register_routes(app):
         except Exception as e:
             db.session.rollback()
             return jsonify({'error': f'创建文章失败: {str(e)}'}), 500
-    @app.route('/api/posts',methods=['GET'])
-    def get_all_posts():
-        try:
-            posts = Post.query.all()
-            return jsonify({
-                'message': '获取文章成功',
-                "count":len(posts),
-                'posts': [post.to_dict() for post in posts]
-            }), 200
-        except Exception as e:
-            return jsonify({'error': f'获取文章失败: {str(e)}'}), 500
-
     @app.route('/api/posts/<int:post_id>', methods=['GET'])
     def get_post_detail(post_id):
+        """获取文章详情（包含作者信息和评论）"""
         try:
             post = Post.query.get(post_id)
             if not post:
                 return jsonify({'error': '文章不存在'}), 404
-            response_data = {
-            'id': post.id,
-            'title': post.title,
-            'content': post.content,
-            'author_id': post.author_id,
-            'created_at': post.created_at.isoformat() if post.created_at else None,
-            'updated_at': post.updated_at.isoformat() if post.updated_at else None
-        }
-            return jsonify(response_data), 200
-       
+            
+            return jsonify({
+                'message': '获取文章成功',
+                'data': post.to_dict(include_author=True, include_comments=True)
+            }), 200
         
         except Exception as e:
             return jsonify({'error': f'获取文章失败: {str(e)}'}), 500
@@ -315,28 +299,92 @@ def register_routes(app):
             db.session.rollback()
             return jsonify({'error': f'删除文章失败: {str(e)}'}), 500
     @app.route('/api/posts', methods=['GET'])
-    def get_posts_with_pagination():
-        """获取文章列表（支持分页）"""
+    def get_posts():
+        """
+        获取文章列表（支持分页 + 过滤 + 排序）
+        
+        查询参数：
+            page     - 页码（默认 1）
+            per_page - 每页数量（默认 10，最大 100）
+            keyword  - 搜索关键字（搜索标题和内容）
+            author_id - 按作者ID过滤
+            sort     - 排序字段（created_at / updated_at / title，默认 created_at）
+            order    - 排序方向（desc 降序 / asc 升序，默认 desc）
+        """
         try:
-            # 1. 获取分页参数
+            # ============ 1. 获取分页参数 ============
             page = request.args.get('page', 1, type=int)
             per_page = request.args.get('per_page', 10, type=int)
             
-            # 2. 执行分页查询（按创建时间降序）
-            posts = Post.query.order_by(Post.created_at.desc()).paginate(
-                page=page, 
+            # 限制 per_page 范围，防止一次查太多
+            if per_page > 100:
+                per_page = 100
+            if per_page < 1:
+                per_page = 10
+            
+            # ============ 2. 构建查询 ============
+            query = Post.query
+            
+            # ---- 过滤：按关键字搜索（标题或内容包含关键字） ----
+            keyword = request.args.get('keyword', '').strip()
+            if keyword:
+                query = query.filter(
+                    db.or_(
+                        Post.title.contains(keyword),
+                        Post.content.contains(keyword)
+                    )
+                )
+            
+            # ---- 过滤：按作者ID ----
+            author_id = request.args.get('author_id', type=int)
+            if author_id:
+                query = query.filter(Post.author_id == author_id)
+            
+            # ============ 3. 排序 ============
+            sort_field = request.args.get('sort', 'created_at')
+            order = request.args.get('order', 'desc')
+            
+            # 允许的排序字段（防止注入）
+            allowed_sort = {
+                'created_at': Post.created_at,
+                'updated_at': Post.updated_at,
+                'title': Post.title
+            }
+            
+            sort_column = allowed_sort.get(sort_field, Post.created_at)
+            
+            if order == 'asc':
+                query = query.order_by(sort_column.asc())
+            else:
+                query = query.order_by(sort_column.desc())
+            
+            # ============ 4. 执行分页查询 ============
+            pagination = query.paginate(
+                page=page,
                 per_page=per_page,
                 error_out=False
             )
             
-            # 3. 返回分页结果
+            # ============ 5. 返回结果 ============
             return jsonify({
                 'message': '获取文章成功',
-                'count': posts.total,           # 总记录数
-                'page': page,                   # 当前页码
-                'per_page': per_page,           # 每页数量
-                'total_pages': posts.pages,     # 总页数
-                'posts': [post.to_dict() for post in posts.items]  # 当前页的文章列表
+                'data': {
+                    'posts': [post.to_dict() for post in pagination.items],
+                    'pagination': {
+                        'total': pagination.total,
+                        'page': page,
+                        'per_page': per_page,
+                        'total_pages': pagination.pages,
+                        'has_next': pagination.has_next,
+                        'has_prev': pagination.has_prev
+                    },
+                    'filters': {
+                        'keyword': keyword if keyword else None,
+                        'author_id': author_id,
+                        'sort': sort_field,
+                        'order': order
+                    }
+                }
             }), 200
         except Exception as e:
             return jsonify({'error': f'获取文章失败: {str(e)}'}), 500
@@ -381,14 +429,23 @@ def register_routes(app):
 
     @app.route('/api/posts/<int:post_id>/comments', methods=['GET'])
     def get_comments_for_post(post_id):
+        """获取文章的评论列表"""
         try:
-            comments = Comment.query.filter_by(post_id=post_id).all()
-            if not comments:
-                return jsonify({'error': '文章没有评论'}), 404
+            # 验证文章是否存在
+            post = Post.query.get(post_id)
+            if not post:
+                return jsonify({'error': '文章不存在'}), 404
+            
+            comments = Comment.query.filter_by(post_id=post_id)\
+                .order_by(Comment.created_at.desc()).all()
+            
             return jsonify({
                 'message': '获取评论成功',
-                'count': len(comments),
-                'comments': [comment.to_dict(include_author=False) for comment in comments]
+                'data': {
+                    'comments': [comment.to_dict(include_author=True) for comment in comments],
+                    'count': len(comments),
+                    'post_id': post_id
+                }
             }), 200
         except Exception as e:
             return jsonify({'error': f'获取评论失败: {str(e)}'}), 500
