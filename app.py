@@ -12,7 +12,6 @@ from validators import (
 from responses import success, error
 from exceptions import APIError, BadRequestError, NotFoundError, ForbiddenError, ConflictError
 from logger import setup_logger, register_request_logging
-
 # ============================================================================
 # Flask 应用初始化
 # ============================================================================
@@ -55,7 +54,7 @@ def register_error_handlers(app):
     
     @app.errorhandler(400)
     def bad_request(e):
-        app.logger.warning(f'400 Bad Request: {e}')
+        app.logger.warning(f'400 请求错误: {e}')
         return jsonify({'error': '请求格式错误', 'detail': str(e)}), 400
     
     @app.errorhandler(404)
@@ -68,14 +67,9 @@ def register_error_handlers(app):
     
     @app.errorhandler(500)
     def internal_error(e):
-        db.session.rollback()
-        app.logger.error(f'500 Internal Error: {e}')
+        db.session.rollback()  # 出错时回滚数据库
+        app.logger.error(f'500 服务器错误: {e}')
         return jsonify({'error': '服务器内部错误，请稍后重试'}), 500
-
-
-# ============================================================================
-# 路由注册
-# ============================================================================
 
 def register_routes(app):
     """注册路由"""
@@ -84,7 +78,10 @@ def register_routes(app):
     @app.route('/api/health', methods=['GET'])
     def health_check():
         """健康检查接口"""
-        return success('博客系统 API 运行正常')
+        return jsonify({
+            'status': 'ok',
+            'message': '博客系统 API 运行正常'
+        }), 200
     
     # ==================== 用户注册 ====================
     @app.route('/api/users/register', methods=['POST'])
@@ -151,6 +148,7 @@ def register_routes(app):
             if not data:
                 raise BadRequestError('请求体不能为空')
             
+            # 支持邮箱或用户名登录
             email = data.get('email')
             username = data.get('username')
             password = data.get('password')
@@ -169,6 +167,7 @@ def register_routes(app):
             if not user:
                 raise NotFoundError('用户不存在')
             
+            # 使用哈希密码验证
             if not user.check_password(password):
                 raise BadRequestError('密码不正确')
             
@@ -185,13 +184,12 @@ def register_routes(app):
                     'email': user.email
                 }
             })
-            
+
         except APIError:
             raise
         except Exception as e:
             app.logger.error(f'登录失败: {str(e)}')
             return error(f'登录失败: {str(e)}', status_code=500)
-
     # ==================== 获取所有用户 ====================
     @app.route('/api/users/all', methods=['GET'])
     def get_all_users():
@@ -218,6 +216,7 @@ def register_routes(app):
             if not data:
                 raise BadRequestError('请求体不能为空')
             
+            # ---- 输入验证 ----
             valid, msg = validate_post_title(data.get('title', ''))
             if not valid:
                 raise BadRequestError(msg)
@@ -226,6 +225,7 @@ def register_routes(app):
             if not valid:
                 raise BadRequestError(msg)
             
+            # ---- 创建文章 ----
             new_post = Post(
                 title=data['title'].strip(),
                 content=data['content'].strip(),
@@ -247,7 +247,6 @@ def register_routes(app):
             db.session.rollback()
             app.logger.error(f'创建文章失败: {str(e)}')
             return error(f'创建文章失败: {str(e)}', status_code=500)
-
     # ==================== 获取文章详情 ====================
     @app.route('/api/posts/<int:post_id>', methods=['GET'])
     def get_post_detail(post_id):
@@ -258,7 +257,7 @@ def register_routes(app):
                 raise NotFoundError('文章不存在')
             
             return success('获取文章成功', data=post.to_dict(include_author=True, include_comments=True))
-            
+        
         except APIError:
             raise
         except Exception as e:
@@ -277,6 +276,7 @@ def register_routes(app):
             if not data:
                 raise BadRequestError('请求体不能为空')
             
+            # ---- 输入验证 ----
             valid, msg = validate_post_title(data.get('title', ''))
             if not valid:
                 raise BadRequestError(msg)
@@ -285,13 +285,16 @@ def register_routes(app):
             if not valid:
                 raise BadRequestError(msg)
             
+            # ---- 查找文章 ----
             post = Post.query.get(post_id)
             if not post:
                 raise NotFoundError('文章不存在')
             
+            # ---- 权限验证 ----
             if post.author_id != current_user.id:
                 raise ForbiddenError('无权修改此文章')
             
+            # ---- 更新文章 ----
             post.title = data['title'].strip()
             post.content = data['content'].strip()
             db.session.commit()
@@ -301,14 +304,13 @@ def register_routes(app):
             return success('更新文章成功', data={
                 'post': post.to_dict()
             })
-            
+
         except APIError:
             raise
         except Exception as e:
             db.session.rollback()
             app.logger.error(f'更新文章失败: {str(e)}')
             return error(f'更新文章失败: {str(e)}', status_code=500)
-
     # ==================== 删除文章 ====================
     @app.route('/api/posts/<int:post_id>', methods=['DELETE'])
     @login_required
@@ -331,15 +333,13 @@ def register_routes(app):
             app.logger.info(f'文章删除: "{post_title}" (ID:{post_id}) by {current_user.username}')
             
             return success('删除文章成功')
-            
+
         except APIError:
             raise
         except Exception as e:
             db.session.rollback()
             app.logger.error(f'删除文章失败: {str(e)}')
             return error(f'删除文章失败: {str(e)}', status_code=500)
-
-    # ==================== 获取文章列表（分页+过滤+排序）====================
     @app.route('/api/posts', methods=['GET'])
     def get_posts():
         """
@@ -358,6 +358,7 @@ def register_routes(app):
             page = request.args.get('page', 1, type=int)
             per_page = request.args.get('per_page', 10, type=int)
             
+            # 限制 per_page 范围，防止一次查太多
             if per_page > 100:
                 per_page = 100
             if per_page < 1:
@@ -366,7 +367,7 @@ def register_routes(app):
             # ============ 2. 构建查询 ============
             query = Post.query
             
-            # ---- 过滤：按关键字搜索 ----
+            # ---- 过滤：按关键字搜索（标题或内容包含关键字） ----
             keyword = request.args.get('keyword', '').strip()
             if keyword:
                 query = query.filter(
@@ -385,6 +386,7 @@ def register_routes(app):
             sort_field = request.args.get('sort', 'created_at')
             order = request.args.get('order', 'desc')
             
+            # 允许的排序字段（防止注入）
             allowed_sort = {
                 'created_at': Post.created_at,
                 'updated_at': Post.updated_at,
@@ -423,11 +425,10 @@ def register_routes(app):
                     'order': order
                 }
             })
-            
+
         except Exception as e:
             app.logger.error(f'获取文章列表失败: {str(e)}')
             return error(f'获取文章失败: {str(e)}', status_code=500)
-
     # ==================== 创建评论 ====================
     @app.route('/api/posts/<int:post_id>/comments', methods=['POST'])
     @login_required
@@ -462,7 +463,7 @@ def register_routes(app):
             return success('创建评论成功', data={
                 'comment': comment.to_dict(include_author=True)
             }, status_code=201)
-            
+
         except APIError:
             raise
         except Exception as e:
@@ -487,13 +488,12 @@ def register_routes(app):
                 'count': len(comments),
                 'post_id': post_id
             })
-            
+
         except APIError:
             raise
         except Exception as e:
             app.logger.error(f'获取评论失败: {str(e)}')
             return error(f'获取评论失败: {str(e)}', status_code=500)
-
     # ==================== 更新评论 ====================
     @app.route('/api/posts/comments/<int:comment_id>', methods=['PUT'])
     @login_required
@@ -525,7 +525,7 @@ def register_routes(app):
             return success('更新评论成功', data={
                 'comment': comment.to_dict(include_author=True)
             })
-            
+
         except APIError:
             raise
         except Exception as e:
@@ -554,15 +554,13 @@ def register_routes(app):
             app.logger.info(f'评论删除: #{comment_id} by {current_user.username}')
             
             return success('删除评论成功')
-            
+
         except APIError:
             raise
         except Exception as e:
             db.session.rollback()
             app.logger.error(f'删除评论失败: {str(e)}')
             return error(f'删除评论失败: {str(e)}', status_code=500)
-
-
 # ============================================================================
 # 数据库初始化
 # ============================================================================
@@ -583,37 +581,42 @@ def init_db(app, force=False):
         expected_tables = ['users', 'posts', 'comments']
         
         if force:
-            app.logger.warning('强制模式：删除所有表...')
+            # 强制模式：删除所有表后重新创建（仅用于开发环境）
+            print("⚠️  强制模式：删除所有表...")
             db.drop_all()
             db.create_all()
-            app.logger.info('数据库表重新创建成功')
+            print("✅ 数据库表重新创建成功！")
         else:
+            # 智能模式：只创建缺失的表
             missing_tables = [t for t in expected_tables if t not in existing_tables]
             
             if missing_tables:
-                app.logger.info(f'发现缺失的表: {", ".join(missing_tables)}')
-                db.create_all()
-                app.logger.info('数据库表创建成功')
+                print(f"📝 发现缺失的表: {', '.join(missing_tables)}")
+                db.create_all()  # 只创建缺失的表（幂等操作）
+                print("✅ 数据库表创建成功！")
             else:
-                app.logger.info('所有表已存在，跳过创建')
+                print("✅ 所有表已存在，跳过创建")
         
+        # 显示所有表的状态（重新检查，因为可能刚创建了表）
         final_tables = inspector.get_table_names()
+        print("📊 当前数据库表：")
         for table in expected_tables:
             status = "✓" if table in final_tables else "✗"
-            app.logger.info(f'  {status} {table}')
-
+            print(f"   {status} {table}")
 
 # ============================================================================
 # 主程序
 # ============================================================================
 
 if __name__ == '__main__':
+    # 创建应用
     app = create_app()
     
+    # 初始化数据库（智能检查，不会重复创建）
     print("=" * 60)
     print("博客系统后端 API - 初始化")
     print("=" * 60)
-    init_db(app)
+    init_db(app)  # 只在表不存在时创建，不会重复创建或删除数据
     
     print("\n✅ API 服务启动中...")
     print("📝 可用接口：")
@@ -634,4 +637,5 @@ if __name__ == '__main__':
     print("\n🚀 服务运行在: http://127.0.0.1:5000")
     print("=" * 60)
     
+    # 启动 Flask 应用
     app.run(debug=True, host='0.0.0.0', port=5000)
