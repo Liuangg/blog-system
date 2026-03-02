@@ -1,11 +1,12 @@
 """
-认证工具模块 - JWT Token 生成和验证
+认证工具模块 - c
 """
 import jwt
 from functools import wraps
-from datetime import datetime, timedelta
-from flask import request, jsonify, current_app
-from models import User
+from datetime import datetime, timedelta, timezone
+from flask import request, current_app
+from models import User, db
+from responses import error
 
 
 def generate_token(user_id):
@@ -18,10 +19,11 @@ def generate_token(user_id):
     返回:
         str: JWT Token 字符串
     """
+    now = datetime.now(timezone.utc)
     payload = {
         'user_id': user_id,
-        'exp': datetime.utcnow() + timedelta(days=7),  # Token 7天后过期
-        'iat': datetime.utcnow()  # 签发时间
+        'exp': now + timedelta(days=7),  # Token 7天后过期
+        'iat': now  # 签发时间
     }
     token = jwt.encode(
         payload,
@@ -82,7 +84,7 @@ def get_current_user():
     if not user_id:
         return None
     
-    user = User.query.get(user_id)
+    user = db.session.get(User, user_id)
     return user
 
 
@@ -103,10 +105,7 @@ def login_required(f):
         current_user = get_current_user()
         
         if not current_user:
-            return jsonify({
-                'error': '需要登录',
-                'message': '请先登录后再进行操作'
-            }), 401
+            return error('需要登录', detail='请先登录后再进行操作', status_code=401)
         
         # 将当前用户传递给路由函数
         # 可以通过 request.current_user 访问

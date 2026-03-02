@@ -204,13 +204,85 @@ def register_routes(app):
             app.logger.error(f'获取用户失败: {str(e)}')
             return error(f'获取用户失败: {str(e)}', status_code=500)
 
+    # ==================== 获取当前用户信息 ====================
+    @app.route('/api/users/me', methods=['GET'])
+    @login_required
+    def get_me():
+        """获取当前登录用户信息"""
+        try:
+            current_user = request.current_user
+            
+            return success('获取当前用户成功', data={
+                'id': current_user.id,
+                'username': current_user.username,
+                'email': current_user.email,
+                'created_at': current_user.created_at.isoformat() if current_user.created_at else None
+            })
+
+        except APIError:
+            raise
+        except Exception as e:
+            app.logger.error(f'获取当前用户失败: {str(e)}')
+            return error(f'获取当前用户失败: {str(e)}', status_code=500)
+
+    # ==================== 修改密码 ====================
+    @app.route('/api/users/password', methods=['PUT'])
+    @login_required
+    def update_password():
+        """修改当前用户密码"""
+        try:
+            # 获取当前用户
+            current_user = request.current_user
+            
+            # 获取请求数据
+            data = request.get_json()
+            if not data:
+                raise BadRequestError('请求体不能为空')
+            
+            # 获取新旧密码
+            old_password = data.get('old_password')
+            new_password = data.get('new_password')
+            
+            # 验证字段是否提供
+            if not old_password:
+                raise BadRequestError('请输入原密码')
+            if not new_password:
+                raise BadRequestError('请输入新密码')
+            
+            # 验证原密码是否正确
+            if not current_user.check_password(old_password):
+                raise BadRequestError('原密码错误')
+            
+            # 新密码不能与原密码相同
+            if old_password == new_password:
+                raise BadRequestError('新密码不能与原密码相同')
+            
+            # 复用验证器检查新密码强度
+            valid, msg = validate_password(new_password)
+            if not valid:
+                raise BadRequestError(msg)
+            
+            # 更新密码
+            current_user.set_password(new_password)
+            db.session.commit()
+            
+            app.logger.info(f'用户 {current_user.username} 修改密码成功')
+            
+            return success('密码修改成功')
+        
+        except APIError:
+            raise
+        except Exception as e:
+            db.session.rollback()
+            app.logger.error(f'修改密码失败: {str(e)}')
+            return error('修改密码失败，请稍后重试', status_code=500)
     # ==================== 创建文章 ====================
     @app.route('/api/posts', methods=['POST'])
     @login_required
     def create_post():
         """创建文章 API（需要登录）"""
         try:
-            current_user = get_current_user()
+            current_user = request.current_user
             
             data = request.get_json()
             if not data:
@@ -252,7 +324,7 @@ def register_routes(app):
     def get_post_detail(post_id):
         """获取文章详情（包含作者信息和评论）"""
         try:
-            post = Post.query.get(post_id)
+            post = db.session.get(Post, post_id)
             if not post:
                 raise NotFoundError('文章不存在')
             
@@ -270,7 +342,7 @@ def register_routes(app):
     def update_post(post_id):
         """更新文章 API（需要登录，只能更新自己的文章）"""
         try:
-            current_user = get_current_user()
+            current_user = request.current_user
             
             data = request.get_json()
             if not data:
@@ -286,7 +358,7 @@ def register_routes(app):
                 raise BadRequestError(msg)
             
             # ---- 查找文章 ----
-            post = Post.query.get(post_id)
+            post = db.session.get(Post, post_id)
             if not post:
                 raise NotFoundError('文章不存在')
             
@@ -317,9 +389,9 @@ def register_routes(app):
     def delete_post(post_id):
         """删除文章 API（需要登录，只能删除自己的文章）"""
         try:
-            current_user = get_current_user()
+            current_user = request.current_user
             
-            post = Post.query.get(post_id)
+            post = db.session.get(Post, post_id)
             if not post:
                 raise NotFoundError('文章不存在')
             
@@ -435,13 +507,13 @@ def register_routes(app):
     def create_comment(post_id):
         """创建评论 API（需要登录）"""
         try:
-            current_user = get_current_user()
+            current_user = request.current_user
             
             data = request.get_json()
             if not data:
                 raise BadRequestError('请求体不能为空')
             
-            post = Post.query.get(post_id)
+            post = db.session.get(Post, post_id)
             if not post:
                 raise NotFoundError('文章不存在')
             
@@ -476,7 +548,7 @@ def register_routes(app):
     def get_comments_for_post(post_id):
         """获取文章的评论列表"""
         try:
-            post = Post.query.get(post_id)
+            post = db.session.get(Post, post_id)
             if not post:
                 raise NotFoundError('文章不存在')
             
@@ -500,7 +572,7 @@ def register_routes(app):
     def update_comment(comment_id):
         """更新评论 API（需要登录，只能更新自己的评论）"""
         try:
-            current_user = get_current_user()
+            current_user = request.current_user
             
             data = request.get_json()
             if not data:
@@ -510,7 +582,7 @@ def register_routes(app):
             if not valid:
                 raise BadRequestError(msg)
             
-            comment = Comment.query.get(comment_id)
+            comment = db.session.get(Comment, comment_id)
             if not comment:
                 raise NotFoundError('评论不存在')
             
@@ -532,16 +604,15 @@ def register_routes(app):
             db.session.rollback()
             app.logger.error(f'更新评论失败: {str(e)}')
             return error(f'更新评论失败: {str(e)}', status_code=500)
-
     # ==================== 删除评论 ====================
     @app.route('/api/posts/comments/<int:comment_id>', methods=['DELETE'])
     @login_required
     def delete_comment(comment_id):
         """删除评论 API（需要登录，只能删除自己的评论）"""
         try:
-            current_user = get_current_user()
+            current_user = request.current_user
             
-            comment = Comment.query.get(comment_id)
+            comment = db.session.get(Comment, comment_id)
             if not comment:
                 raise NotFoundError('评论不存在')
             
@@ -624,6 +695,8 @@ if __name__ == '__main__':
     print("   POST   /api/users/register   - 用户注册")
     print("   POST   /api/users/login      - 用户登录")
     print("   GET    /api/users/all        - 获取所有用户")
+    print("   GET    /api/users/me         - 获取当前用户信息（需登录）")
+    print("   PUT    /api/users/password   - 修改密码（需登录）")
     print("   GET    /api/posts            - 获取文章列表（分页+过滤+排序）")
     print("   POST   /api/posts            - 创建文章（需登录）")
     print("   GET    /api/posts/<id>       - 获取文章详情")

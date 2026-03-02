@@ -1,143 +1,129 @@
 # 博客系统后端 API
 
-## 📋 项目概述
+这是我做的第一个完整后端项目，核心目标是把“用户-文章-评论”这条链路跑通，同时把登录鉴权、权限控制、统一异常处理这些工程化能力一起练起来。
 
-这是一个基于 Flask + SQLAlchemy 的博客系统后端 API 项目，提供用户管理、文章管理和评论管理功能。
+## 技术栈
 
-## 🎯 项目需求分析
+- Python 3.10+
+- Flask
+- Flask-SQLAlchemy
+- MySQL（PyMySQL）
+- JWT（PyJWT）
+- Werkzeug（密码哈希）
 
-### 核心功能
+## 已实现功能
 
-1. **用户管理**
-   - 用户注册
-   - 用户登录
-   - 用户信息查询
-   - 用户信息更新
+- 用户：注册、登录、获取当前用户、修改密码
+- 文章：发布、列表（分页 + 过滤 + 排序）、详情、更新、删除
+- 评论：创建、列表、更新、删除
+- 鉴权：JWT + `@login_required`
+- 工程化：统一响应格式、统一异常处理、请求日志
 
-2. **文章管理**
-   - 创建文章
-   - 查看文章列表（支持分页）
-   - 查看单篇文章详情
-   - 更新文章
-   - 删除文章
+## 项目结构
 
-3. **评论管理**
-   - 对文章添加评论
-   - 查看文章的所有评论
-   - 更新评论
-   - 删除评论
-
-### 技术栈
-
-- **Web框架**: Flask
-- **ORM**: SQLAlchemy (Flask-SQLAlchemy)
-- **数据库**: MySQL
-- **API风格**: RESTful API
-
-## 📊 数据库设计
-
-### 表结构
-
-#### 1. users（用户表）
-- `id`: 主键，自增
-- `username`: 用户名，唯一，非空
-- `email`: 邮箱，唯一，非空
-- `password`: 密码，非空（实际应用中应加密）
-- `created_at`: 创建时间
-- `updated_at`: 更新时间
-
-#### 2. posts（文章表）
-- `id`: 主键，自增
-- `title`: 文章标题，非空
-- `content`: 文章内容，非空
-- `author_id`: 作者ID，外键关联users表
-- `created_at`: 创建时间
-- `updated_at`: 更新时间
-
-#### 3. comments（评论表）
-- `id`: 主键，自增
-- `content`: 评论内容，非空
-- `post_id`: 文章ID，外键关联posts表
-- `author_id`: 评论者ID，外键关联users表
-- `created_at`: 创建时间
-- `updated_at`: 更新时间
-
-### 关系说明
-
-- **User 和 Post**: 一对多关系（一个用户可以有多篇文章）
-- **Post 和 Comment**: 一对多关系（一篇文章可以有多个评论）
-- **User 和 Comment**: 一对多关系（一个用户可以发表多个评论）
-
-## 📁 项目结构
-
-```
+```text
 blog_system/
-├── README.md                 # 项目说明文档
-├── requirements.txt          # 依赖包列表
-├── config.py                # 配置文件
-├── app.py                   # 主应用入口
-├── models.py                # 数据库模型
-├── routes/                   # 路由模块
-│   ├── __init__.py
-│   ├── users.py             # 用户相关路由
-│   ├── posts.py             # 文章相关路由
-│   └── comments.py          # 评论相关路由
-└── utils/                    # 工具函数
-    ├── __init__.py
-    └── validators.py        # 数据验证函数
+├── app.py            # 主应用入口（路由、错误处理、初始化）
+├── models.py         # User/Post/Comment 模型定义
+├── auth.py           # JWT 生成/校验、登录装饰器
+├── validators.py     # 输入参数校验
+├── responses.py      # 统一响应
+├── exceptions.py     # 自定义业务异常
+├── logger.py         # 日志系统
+├── config.py         # 配置项
+├── requirements.txt  # 依赖
+└── logs/             # 运行日志目录
 ```
 
-## 🚀 快速开始
+## 快速启动
 
-### 1. 安装依赖
+### 1) 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. 配置数据库
+### 2) 配置数据库
 
-编辑 `config.py`，修改数据库连接信息。
+`config.py` 默认连接：
 
-### 3. 初始化数据库
+```python
+SQLALCHEMY_DATABASE_URI = "mysql+pymysql://root:root123@localhost:3306/blog_system"
+```
+
+按你的本机账号密码修改即可，也可以用 `DATABASE_URL` 覆盖。
+
+### 3) 启动项目
 
 ```bash
 python app.py
 ```
 
-首次运行会自动创建数据库表。
+启动后默认地址：
 
-### 4. 启动服务
-
-```bash
-python app.py
+```text
+http://127.0.0.1:5000
 ```
 
-服务将在 `http://127.0.0.1:5000` 启动。
+## 鉴权说明
 
-## 📝 API 接口列表
+需要登录的接口，在请求头携带：
 
-### 用户相关
-- `POST /api/users/register` - 用户注册
-- `POST /api/users/login` - 用户登录
-- `GET /api/users/<id>` - 获取用户信息
-- `PUT /api/users/<id>` - 更新用户信息
+```text
+Authorization: Bearer <token>
+```
 
-### 文章相关
-- `POST /api/posts` - 创建文章
-- `GET /api/posts` - 获取文章列表（支持分页）
-- `GET /api/posts/<id>` - 获取文章详情
-- `PUT /api/posts/<id>` - 更新文章
-- `DELETE /api/posts/<id>` - 删除文章
+Token 通过 `POST /api/users/login` 获取。
 
-### 评论相关
-- `POST /api/posts/<post_id>/comments` - 添加评论
-- `GET /api/posts/<post_id>/comments` - 获取文章的所有评论
-- `PUT /api/comments/<id>` - 更新评论
-- `DELETE /api/comments/<id>` - 删除评论
+## 主要接口
 
-## 📅 开发计划
+| 方法 | 路径 | 说明 | 需登录 |
+|---|---|---|---|
+| GET | `/api/health` | 健康检查 | 否 |
+| POST | `/api/users/register` | 用户注册 | 否 |
+| POST | `/api/users/login` | 用户登录 | 否 |
+| GET | `/api/users/all` | 用户列表 | 否 |
+| GET | `/api/users/me` | 当前用户信息 | 是 |
+| PUT | `/api/users/password` | 修改密码 | 是 |
+| POST | `/api/posts` | 发布文章 | 是 |
+| GET | `/api/posts` | 文章列表 | 否 |
+| GET | `/api/posts/<post_id>` | 文章详情 | 否 |
+| PUT | `/api/posts/<post_id>` | 更新文章（仅作者） | 是 |
+| DELETE | `/api/posts/<post_id>` | 删除文章（仅作者） | 是 |
+| POST | `/api/posts/<post_id>/comments` | 发表评论 | 是 |
+| GET | `/api/posts/<post_id>/comments` | 评论列表 | 否 |
+| PUT | `/api/posts/comments/<comment_id>` | 更新评论（仅作者） | 是 |
+| DELETE | `/api/posts/comments/<comment_id>` | 删除评论（仅作者） | 是 |
 
-- **Day 20-21**: 项目规划 + 数据库设计 ✅
-- **Day 22-24**: 核心功能开发
-- **Day 25-26**: 项目完善 + Git 管理
+## 统一响应格式
+
+成功：
+
+```json
+{
+  "message": "操作成功",
+  "data": {}
+}
+```
+
+失败：
+
+```json
+{
+  "error": "错误信息",
+  "detail": "可选错误详情"
+}
+```
+
+## 数据模型
+
+- `users`：用户信息
+- `posts`：文章信息
+- `comments`：评论信息
+
+三张表通过外键串起来，覆盖了最常见的一对多关系练习场景。
+
+## 日志
+
+- 应用日志：`logs/app.log`
+- 错误日志：`logs/error.log`
